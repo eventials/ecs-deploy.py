@@ -282,12 +282,19 @@ class CLI(object):
             kwargs['cluster'] = self.cluster
             kwargs['service'] = self.service_name
             kwargs['taskDefinition'] = self.new_task_definition['family']
-            # optional kwargs from args
+
             deployment_config = {}
-            deployment_config = self._arg_kwargs(deployment_config, 'min',
-                                                 'minimumHealthyPercent')
-            deployment_config = self._arg_kwargs(deployment_config, 'max',
-                                                 'maximumPercent')
+
+            minimumHealthyPercent = self.args.get('min')
+            maximumPercent = self.args.get('max')
+
+            if minimumHealthyPercent is None or maximumPercent is None:
+                minimumHealthyPercent = 0
+                maximumPercent = 100
+
+            deployment_config['minimumHealthyPercent'] = minimumHealthyPercent
+            deployment_config['maximumPercent'] = maximumPercent
+
             kwargs['deploymentConfiguration'] = deployment_config
             kwargs = self._arg_kwargs(kwargs, 'desired_count')
 
