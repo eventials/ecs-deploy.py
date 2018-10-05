@@ -20,7 +20,7 @@ Usage
 
 The script is installed as an executable with::
 
-		$ pip install ecs-deploy-py
+		$ pip install git+https://github.com/eventials/ecs-deploy.py.git
 
 To run the script::
 
