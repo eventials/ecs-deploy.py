@@ -44,6 +44,7 @@ class CLI(object):
         # run script
         self._run_parser()
 
+
     def _init_parser(self):
         parser = argparse.ArgumentParser(
             description='AWS ECS Deployment Script',
@@ -168,6 +169,7 @@ class CLI(object):
         args = parser.parse_args(sys.argv[1:])
         return vars(args)
 
+
     def _run_parser(self):
         self.cluster = self.args.get('cluster')
         self.task_definition_name = self._task_definition_name()
@@ -213,10 +215,12 @@ class CLI(object):
         else:
             sys.exit(1)
 
+
     def _int_or_none(self, value):
         if type(value) == str and value.isdigit():
             return int(value)
         return None
+
 
     def _task_definition_name(self):
         if self.args.get('task_definition'):
@@ -226,6 +230,7 @@ class CLI(object):
         service = self.client_fn('describe_services')
         arn = service['services'][0]['taskDefinition']
         return arn.split('/')[1].split(':')[0]
+
 
     def _service_name(self):
         if self.args.get('service_name'):
@@ -237,12 +242,14 @@ class CLI(object):
                    in s][0]
         return service.split('/')[1].split(':')[0]
 
+
     def _arg_kwargs(self, kwargs, arg_name, alt_name=None):
         # add specified arg to kwargs if it exists, return kwargs
         if self.args.get(arg_name):
             kwarg_name = alt_name or arg_name
             kwargs[kwarg_name] = self.args.get(arg_name)
         return kwargs
+
 
     def client_kwargs(self, fn):
         kwargs = {}
@@ -259,8 +266,10 @@ class CLI(object):
 
         elif fn == 'register_task_definition':
             kwargs['family'] = self.task_definition['family']
-            kwargs['containerDefinitions'] = \
-                self.task_definition['containerDefinitions']
+            kwargs['containerDefinitions'] = self.task_definition['containerDefinitions']
+
+            if 'executionRoleArn' in self.task_definition:
+                kwargs['executionRoleArn'] = self.task_definition['executionRoleArn']
 
             # optional kwargs from args
             for ci in self.args.get('container_image'):
@@ -308,6 +317,7 @@ class CLI(object):
             kwargs['tasks'] = self.running_tasks
 
         return kwargs
+
 
     def client_fn(self, fn):
         try:
