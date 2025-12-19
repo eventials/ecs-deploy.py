@@ -165,6 +165,12 @@ class CLI(object):
             type=int,
             help='Number of Task Definition Revisions to persist before \
                 deregistering oldest revisions.')
+        
+        parser.add_argument(
+            '--task-role-arn',
+            type=str,
+            help='ARN of the IAM role that containers in this task can assume. \
+                If not provided, the existing taskRoleArn will be used.')
 
         args = parser.parse_args(sys.argv[1:])
         return vars(args)
@@ -270,6 +276,13 @@ class CLI(object):
 
             if 'executionRoleArn' in self.task_definition:
                 kwargs['executionRoleArn'] = self.task_definition['executionRoleArn']
+            
+            taskRoleArn = self.args.get('task_role_arn')
+            if taskRoleArn is None:
+                if 'taskRoleArn' in self.task_definition:
+                    kwargs['taskRoleArn'] = self.task_definition['taskRoleArn']
+            else:
+                kwargs['taskRoleArn'] = taskRoleArn
 
             # optional kwargs from args
             for ci in self.args.get('container_image'):
