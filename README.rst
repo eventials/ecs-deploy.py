@@ -58,6 +58,9 @@ To run the script::
 		                         names are read (ssm:DescribeParameters), never values. Fails if a name is already a
 		                         plain environment variable or a secret pointing to another parameter. Repeatable.
 		 --ssm-container NAME    Container that receives the --ssm-path secrets. Default: the first --container-image.
+		                         Listing the names is all the deploy needs, but the task only starts if its execution
+		                         role can read the values: ssm:GetParameters on those parameters (and kms:Decrypt when
+		                         they use a customer managed KMS key).
 
     Examples:
     Simple (Using env vars for AWS settings):

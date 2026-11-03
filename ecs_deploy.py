@@ -200,8 +200,10 @@ class CLI(object):
         self.task_definition_name = self._task_definition_name()
         self.service_name = self._service_name()
 
-        self.task_definition = self.client_fn(
-            'describe_task_definition')['taskDefinition']
+        described = self.client_fn('describe_task_definition')
+        self.task_definition = described['taskDefinition']
+        # DescribeTaskDefinition returns the tags beside the definition
+        self.task_definition_tags = described.get('tags') or []
         print('Current task definition: %s' %
               self.task_definition['taskDefinitionArn'])
 
@@ -294,7 +296,8 @@ class CLI(object):
             # copy every field RegisterTaskDefinition accepts, so nothing
             # set on the current revision (volumes, cpu, memory, network
             # mode, placement constraints, tags...) is lost on deploy
-            kwargs = self._registrable_fields(self.task_definition)
+            kwargs = self._registrable_fields(
+                self.task_definition, getattr(self, 'task_definition_tags', []))
 
             taskRoleArn = self.args.get('task_role_arn')
             if taskRoleArn is not None:
@@ -351,16 +354,16 @@ class CLI(object):
         return kwargs
 
 
-    def _registrable_fields(self, task_definition):
+    def _registrable_fields(self, task_definition, tags):
         """Fields of a described task definition accepted by
         RegisterTaskDefinition (read from the botocore model, so new API
-        fields are copied too), plus its tags."""
+        fields are copied too), plus the tags of the describe response."""
         accepted = self.client.meta.service_model.operation_model(
             'RegisterTaskDefinition').input_shape.members
         kwargs = dict((k, copy.deepcopy(v))
                       for k, v in task_definition.items() if k in accepted)
-        if task_definition.get('tags'):
-            kwargs['tags'] = copy.deepcopy(task_definition['tags'])
+        if tags:
+            kwargs['tags'] = copy.deepcopy(tags)
         return kwargs
 
     def _ssm_parameter_names(self, path):
@@ -406,13 +409,19 @@ class CLI(object):
                                                     container_name))
                 sys.exit(1)
             if env_name in current:
-                if current[env_name].split(':parameter')[-1] != name:
-                    print('ERROR: secret %s of container %s points to %s, '
-                          'not to %s' % (env_name, container_name,
-                                         current[env_name], name))
+                existing = current[env_name]
+                # an ARN must match exactly (same account and region); a bare
+                # name is compared with the parameter name
+                same = existing == value_from if existing.startswith('arn:') \
+                    else existing == name
+                if not same:
+                    print('ERROR: secret %s of container %s already points to '
+                          'another parameter, not to %s' % (
+                              env_name, container_name, name))
                     sys.exit(1)
                 continue
             secrets.append({'name': env_name, 'valueFrom': value_from})
+            current[env_name] = value_from
             added.append(env_name)
 
         print('SSM %s: %d secret(s) added to %s%s' % (

@@ -31,7 +31,6 @@ def described_task_definition():
         'memory': '512',
         'volumes': [{'name': 'data', 'host': {'sourcePath': '/data'}}],
         'placementConstraints': [{'type': 'memberOf', 'expression': 'attribute:x == y'}],
-        'tags': [{'key': 'team', 'value': 'devops'}],
         'containerDefinitions': [{
             'name': 'app',
             'image': 'repo/app:old',
@@ -44,12 +43,14 @@ def described_task_definition():
 def make_cli(**args):
     cli = object.__new__(ecs_deploy.CLI)
     cli.credentials = {}
-    cli.client = boto3.client('ecs', region_name='us-east-1')
+    cli.client = boto3.client('ecs', region_name='us-east-1', aws_access_key_id='testing',
+                              aws_secret_access_key='testing')
     base = {'container_image': ['app=repo/app:new'], 'ssm_path': None,
             'ssm_container': None, 'task_role_arn': None}
     base.update(args)
     cli.args = base
     cli.task_definition = described_task_definition()
+    cli.task_definition_tags = [{'key': 'team', 'value': 'devops'}]
     return cli
 
 
@@ -73,6 +74,18 @@ class RegisterTaskDefinitionTest(unittest.TestCase):
                       'registeredBy', 'compatibilities', 'requiresAttributes'):
             self.assertNotIn(field, kwargs)
         self.assertEqual(kwargs['containerDefinitions'][0]['image'], 'repo/app:new')
+        self.assertEqual(kwargs['tags'], [{'key': 'team', 'value': 'devops'}])
+
+    def test_reads_tags_from_the_describe_response(self):
+        cli = make_cli()
+        cli.client_fn = mock.Mock(return_value={
+            'taskDefinition': described_task_definition(),
+            'tags': [{'key': 'from', 'value': 'response'}]})
+        cli.args.update({'cluster': 'c', 'task_definition': 'my-service', 'service_name': 's'})
+        cli.client_fn.side_effect = [cli.client_fn.return_value, Exception('stop')]
+        with self.assertRaises(Exception):
+            cli._run_parser()
+        self.assertEqual(cli.task_definition_tags, [{'key': 'from', 'value': 'response'}])
 
     def test_task_role_override(self):
         kwargs = make_cli(task_role_arn='arn:aws:iam::111122223333:role/other') \
@@ -114,6 +127,19 @@ class SsmSecretsTest(unittest.TestCase):
     def test_fails_when_secret_points_to_another_parameter(self):
         with self.assertRaises(SystemExit):
             self.register(['/apps/svc/production/rdbms-url'])
+
+    def test_fails_when_two_parameters_map_to_the_same_name(self):
+        with self.assertRaises(SystemExit):
+            self.register(['/apps/svc/production/app-jwt-secret', '/apps/svc/production/app_jwt_secret'])
+
+    def test_fails_when_existing_arn_is_from_another_account(self):
+        cli = make_cli(ssm_path=['/apps/svc/production/'])
+        cli.task_definition['containerDefinitions'][0]['secrets'].append(
+            {'name': 'APP_JWT_SECRET',
+             'valueFrom': 'arn:aws:ssm:us-east-1:999999999999:parameter/apps/svc/production/app-jwt-secret'})
+        with mock.patch.object(cli, '_ssm_parameter_names', return_value=['/apps/svc/production/app-jwt-secret']):
+            with self.assertRaises(SystemExit):
+                cli.client_kwargs('register_task_definition')
 
     def test_fails_for_unknown_container(self):
         with self.assertRaises(SystemExit):

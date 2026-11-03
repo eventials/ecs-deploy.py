@@ -62,7 +62,7 @@ setup(
     name='ecs-deploy-py',
     version='0.2.0',
     url='https://github.com/skrater/ecs-deploy.py',
-    download_url='https://github.com/skrater/ecs-deploy.py/tarball/0.1.5',
+    download_url='https://github.com/eventials/ecs-deploy.py/tarball/v0.2.0',
     license='MIT',
     author='Cuttlesoft, LLC',
     author_email='engineering@cuttlesoft.com',
