@@ -85,6 +85,20 @@ To run the script::
     	  memory, network mode, placement constraints, tags...), changing only the image and the SSM secrets.
 
 
+IAM permissions
+---------------
+Role that runs the deploy (CI):
+
+- ``ecs:DescribeTaskDefinition``, ``ecs:RegisterTaskDefinition``, ``ecs:DescribeServices``, ``ecs:ListServices``,
+  ``ecs:UpdateService``, ``ecs:ListTasks``, ``ecs:DescribeTasks``
+- ``iam:PassRole`` on the task role and the execution role (condition ``iam:PassedToService = ecs-tasks.amazonaws.com``)
+- ``ecs:TagResource`` when the current task definition has tags (they are copied to the new revision)
+- ``ssm:DescribeParameters`` when using ``--ssm-path`` (``Resource: "*"``; it returns names and metadata, never values)
+
+Task execution role (separate from the CI role), when using ``--ssm-path``:
+
+- ``ssm:GetParameters`` on the added parameters, and ``kms:Decrypt`` when they use a customer managed KMS key
+
 About
 -----
 In EC2 Container Service, the relationship of containers which together provide a useful application (e.g. a database, \
