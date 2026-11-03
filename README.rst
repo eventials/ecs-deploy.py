@@ -20,7 +20,9 @@ Usage
 
 The script is installed as an executable with::
 
-		$ pip install git+https://github.com/eventials/ecs-deploy.py.git
+		$ pip install git+https://github.com/eventials/ecs-deploy.py.git@v0.2.0
+
+Pin a tag (``@v0.2.0``): installing from the default branch makes every pipeline pick up any change immediately.
 
 To run the script::
 
@@ -50,6 +52,15 @@ To run the script::
 		 -M | --max              maximumPercent: The upper limit on the number of running tasks during a deployment.
 		 -t | --timeout          Default is 90s. Script monitors ECS Service for new task definition to be running.
 		 -v | --verbose          Verbose output
+		 --task-role-arn         IAM role for the task. Default: the taskRoleArn of the current revision.
+		 --ssm-path PATH         SSM Parameter Store path (e.g. /apps/my-service/production/) whose parameters are
+		                         added to the container secrets: app-jwt-secret -> APP_JWT_SECRET. Only parameter
+		                         names are read (ssm:DescribeParameters), never values. Fails if a name is already a
+		                         plain environment variable or a secret pointing to another parameter. Repeatable.
+		 --ssm-container NAME    Container that receives the --ssm-path secrets. Default: the first --container-image.
+		                         Listing the names is all the deploy needs, but the task only starts if its execution
+		                         role can read the values: ssm:GetParameters on those parameters (and kms:Decrypt when
+		                         they use a customer managed KMS key).
 
     Examples:
     Simple (Using env vars for AWS settings):
@@ -64,9 +75,30 @@ To run the script::
 
     	$ ecs-deploy-py -p PROFILE -c production1 -n doorman-service -i docker.repo.com/doorman -m 50 -M 100 -t 240 -v
 
+    Adding the service parameters from SSM as secrets:
+
+    	$ ecs-deploy-py -c production1 -n doorman-service -l doorman=docker.repo.com/doorman:abc123 --ssm-path /apps/doorman/production/
+
     Notes:
     	- If a tag is not found in image, it will default the tag to "latest"
+    	- The new revision copies every field RegisterTaskDefinition accepts from the current one (volumes, cpu,
+    	  memory, network mode, placement constraints, tags...). Only the image and the SSM secrets change, plus
+    	  taskRoleArn when --task-role-arn is given.
 
+
+IAM permissions
+---------------
+Role that runs the deploy (CI):
+
+- ``ecs:DescribeTaskDefinition``, ``ecs:RegisterTaskDefinition``, ``ecs:DescribeServices``, ``ecs:ListServices``,
+  ``ecs:UpdateService``, ``ecs:ListTasks``, ``ecs:DescribeTasks``
+- ``iam:PassRole`` on the task role and the execution role (condition ``iam:PassedToService = ecs-tasks.amazonaws.com``)
+- ``ecs:TagResource`` when the current task definition has tags (they are copied to the new revision)
+- ``ssm:DescribeParameters`` when using ``--ssm-path`` (``Resource: "*"``; it returns names and metadata, never values)
+
+Task execution role (separate from the CI role), when using ``--ssm-path``:
+
+- ``ssm:GetParameters`` on the added parameters, and ``kms:Decrypt`` when they use a customer managed KMS key
 
 About
 -----
