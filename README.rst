@@ -82,7 +82,8 @@ To run the script::
     Notes:
     	- If a tag is not found in image, it will default the tag to "latest"
     	- The new revision copies every field RegisterTaskDefinition accepts from the current one (volumes, cpu,
-    	  memory, network mode, placement constraints, tags...), changing only the image and the SSM secrets.
+    	  memory, network mode, placement constraints, tags...). Only the image and the SSM secrets change, plus
+    	  taskRoleArn when --task-role-arn is given.
 
 
 IAM permissions
