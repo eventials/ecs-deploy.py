@@ -7,6 +7,8 @@
 """
 
 from __future__ import print_function
+import copy
+import re
 import sys
 import time
 import argparse
@@ -31,6 +33,7 @@ class CLI(object):
                                            'region_name')
 
             # init boto3 ecs client
+            self.credentials = credentials
             self.client = boto3.client('ecs', **credentials)
         except ClientError as err:
             print('Failed to create boto3 client.\n%s' % err)
@@ -172,6 +175,22 @@ class CLI(object):
             help='ARN of the IAM role that containers in this task can assume. \
                 If not provided, the existing taskRoleArn will be used.')
 
+        parser.add_argument(
+            '--ssm-path',
+            action='append',
+            help='SSM Parameter Store path (e.g. /apps/my-service/production/) \
+                whose parameters are added to the container secrets. The \
+                parameter name becomes the variable name: app-jwt-secret -> \
+                APP_JWT_SECRET. Only names are read, never values. The deploy \
+                fails if a name already exists as a plain environment variable \
+                or as a secret pointing to another parameter. May be repeated.')
+
+        parser.add_argument(
+            '--ssm-container',
+            type=str,
+            help='Container that receives the --ssm-path secrets. Default: \
+                the container of the first --container-image.')
+
         args = parser.parse_args(sys.argv[1:])
         return vars(args)
 
@@ -269,19 +288,16 @@ class CLI(object):
 
         elif fn == 'describe_task_definition':
             kwargs['taskDefinition'] = self.task_definition_name
+            kwargs['include'] = ['TAGS']
 
         elif fn == 'register_task_definition':
-            kwargs['family'] = self.task_definition['family']
-            kwargs['containerDefinitions'] = self.task_definition['containerDefinitions']
+            # copy every field RegisterTaskDefinition accepts, so nothing
+            # set on the current revision (volumes, cpu, memory, network
+            # mode, placement constraints, tags...) is lost on deploy
+            kwargs = self._registrable_fields(self.task_definition)
 
-            if 'executionRoleArn' in self.task_definition:
-                kwargs['executionRoleArn'] = self.task_definition['executionRoleArn']
-            
             taskRoleArn = self.args.get('task_role_arn')
-            if taskRoleArn is None:
-                if 'taskRoleArn' in self.task_definition:
-                    kwargs['taskRoleArn'] = self.task_definition['taskRoleArn']
-            else:
+            if taskRoleArn is not None:
                 kwargs['taskRoleArn'] = taskRoleArn
 
             # optional kwargs from args
@@ -299,6 +315,9 @@ class CLI(object):
                           (ci_container_name,
                            self.task_definition['taskDefinitionArn']))
                     sys.exit(1)
+
+            for ssm_path in self.args.get('ssm_path') or []:
+                self._add_ssm_secrets(kwargs['containerDefinitions'], ssm_path)
 
         elif fn == 'update_service':
             kwargs['cluster'] = self.cluster
@@ -332,6 +351,74 @@ class CLI(object):
         return kwargs
 
 
+    def _registrable_fields(self, task_definition):
+        """Fields of a described task definition accepted by
+        RegisterTaskDefinition (read from the botocore model, so new API
+        fields are copied too), plus its tags."""
+        accepted = self.client.meta.service_model.operation_model(
+            'RegisterTaskDefinition').input_shape.members
+        kwargs = dict((k, copy.deepcopy(v))
+                      for k, v in task_definition.items() if k in accepted)
+        if task_definition.get('tags'):
+            kwargs['tags'] = copy.deepcopy(task_definition['tags'])
+        return kwargs
+
+    def _ssm_parameter_names(self, path):
+        ssm = boto3.client('ssm', **self.credentials)
+        names = []
+        for page in ssm.get_paginator('describe_parameters').paginate(
+                ParameterFilters=[{'Key': 'Path', 'Option': 'OneLevel',
+                                   'Values': [path]}]):
+            names.extend(p['Name'] for p in page['Parameters'])
+        return sorted(names)
+
+    def _add_ssm_secrets(self, container_definitions, ssm_path):
+        path = '/' + ssm_path.strip('/')
+        container_name = self.args.get('ssm_container') or \
+            self.args.get('container_image')[0].split('=')[0]
+        containers = [cd for cd in container_definitions
+                      if cd['name'] == container_name]
+        if not containers:
+            print('Container %s not found for --ssm-path %s' %
+                  (container_name, path))
+            sys.exit(1)
+        container = containers[0]
+
+        # arn:aws:ecs:<region>:<account>:task-definition/...
+        _, partition, _, region, account = \
+            self.task_definition['taskDefinitionArn'].split(':')[:5]
+        plain = set(e['name'] for e in container.get('environment', []))
+        secrets = container.setdefault('secrets', [])
+        current = dict((s['name'], s['valueFrom']) for s in secrets)
+
+        added = []
+        for name in self._ssm_parameter_names(path):
+            env_name = ssm_env_name(name)
+            value_from = 'arn:%s:ssm:%s:%s:parameter%s' % (
+                partition, region, account, name)
+            if env_name is None:
+                print('ERROR: SSM parameter %s does not map to a valid '
+                      'variable name' % name)
+                sys.exit(1)
+            if env_name in plain:
+                print('ERROR: %s (from %s) is already a plain environment '
+                      'variable of container %s' % (env_name, name,
+                                                    container_name))
+                sys.exit(1)
+            if env_name in current:
+                if current[env_name].split(':parameter')[-1] != name:
+                    print('ERROR: secret %s of container %s points to %s, '
+                          'not to %s' % (env_name, container_name,
+                                         current[env_name], name))
+                    sys.exit(1)
+                continue
+            secrets.append({'name': env_name, 'valueFrom': value_from})
+            added.append(env_name)
+
+        print('SSM %s: %d secret(s) added to %s%s' % (
+            path, len(added), container_name,
+            (': ' + ', '.join(added)) if added else ''))
+
     def client_fn(self, fn):
         try:
             kwargs = self.client_kwargs(fn)
@@ -344,6 +431,16 @@ class CLI(object):
         except Exception as e:
             print('Exception: %s' % e)
             sys.exit(1)
+
+
+def ssm_env_name(parameter_name):
+    """/apps/my-service/production/app-jwt-secret -> APP_JWT_SECRET
+    (None when the last segment is not a valid variable name)."""
+    env_name = parameter_name.rstrip('/').split('/')[-1] \
+        .replace('-', '_').upper()
+    if re.match(r'^[A-Z][A-Z0-9_]*$', env_name):
+        return env_name
+    return None
 
 
 def main():

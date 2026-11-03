@@ -20,7 +20,9 @@ Usage
 
 The script is installed as an executable with::
 
-		$ pip install git+https://github.com/eventials/ecs-deploy.py.git
+		$ pip install git+https://github.com/eventials/ecs-deploy.py.git@v0.2.0
+
+Pin a tag (``@v0.2.0``): installing from the default branch makes every pipeline pick up any change immediately.
 
 To run the script::
 
@@ -50,6 +52,12 @@ To run the script::
 		 -M | --max              maximumPercent: The upper limit on the number of running tasks during a deployment.
 		 -t | --timeout          Default is 90s. Script monitors ECS Service for new task definition to be running.
 		 -v | --verbose          Verbose output
+		 --task-role-arn         IAM role for the task. Default: the taskRoleArn of the current revision.
+		 --ssm-path PATH         SSM Parameter Store path (e.g. /apps/my-service/production/) whose parameters are
+		                         added to the container secrets: app-jwt-secret -> APP_JWT_SECRET. Only parameter
+		                         names are read (ssm:DescribeParameters), never values. Fails if a name is already a
+		                         plain environment variable or a secret pointing to another parameter. Repeatable.
+		 --ssm-container NAME    Container that receives the --ssm-path secrets. Default: the first --container-image.
 
     Examples:
     Simple (Using env vars for AWS settings):
@@ -64,8 +72,14 @@ To run the script::
 
     	$ ecs-deploy-py -p PROFILE -c production1 -n doorman-service -i docker.repo.com/doorman -m 50 -M 100 -t 240 -v
 
+    Adding the service parameters from SSM as secrets:
+
+    	$ ecs-deploy-py -c production1 -n doorman-service -l doorman=docker.repo.com/doorman:abc123 --ssm-path /apps/doorman/production/
+
     Notes:
     	- If a tag is not found in image, it will default the tag to "latest"
+    	- The new revision copies every field RegisterTaskDefinition accepts from the current one (volumes, cpu,
+    	  memory, network mode, placement constraints, tags...), changing only the image and the SSM secrets.
 
 
 About

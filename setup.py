@@ -60,7 +60,7 @@ if sys.version_info >= (3,):
 
 setup(
     name='ecs-deploy-py',
-    version='0.1.5',
+    version='0.2.0',
     url='https://github.com/skrater/ecs-deploy.py',
     download_url='https://github.com/skrater/ecs-deploy.py/tarball/0.1.5',
     license='MIT',
